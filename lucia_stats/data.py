@@ -36,6 +36,8 @@ def get_noni_ripeness(do_zscore=False):
     tidy["Ripeness"] = tidy["Ripeness"].astype(int)
 
     meta_cols = ["Sample", "Replicate", "Ripeness"]
+    # Strip trailing or leading whitespace from column names
+    tidy.columns = tidy.columns.str.strip()
     odour_cols = tidy.columns.difference(meta_cols)
 
     if do_zscore:
