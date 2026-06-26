@@ -1,9 +1,9 @@
+import os, sys
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib import cm
 from matplotlib.gridspec import GridSpec
- 
 from tqdm import tqdm
 from sklearn.model_selection import LeaveOneGroupOut
 from sklearn.linear_model import LinearRegression, LassoCV, RidgeCV
@@ -14,6 +14,10 @@ from sklearn.pipeline import make_pipeline
 from sklearn.model_selection import cross_validate, cross_val_score
 import warnings
 warnings.filterwarnings('ignore', category=FutureWarning)
+
+sys.path.append(os.environ["GIT"])
+
+from label_axes import label_axes
 
 from lucia_stats.common import PCScoreSelector, VarianceSelector, RandomSelector, RandomNonPCSelector
 from lucia_stats.data import get_noni_ripeness
@@ -34,7 +38,7 @@ class Analysis:
             "lasso":  make_pipeline(LassoCV(cv=5, max_iter=50000, alphas=50)),
             "pc_k":   make_pipeline(PCScoreSelector(k=self.k), LinearRegression()),
             "var_k":  make_pipeline(VarianceSelector(k=self.k), LinearRegression()),
-            "corr_k": make_pipeline(SelectKBest(score_func=f_regression, k=self.k), RidgeCV(alphas=alphas)),
+            "corr_k": make_pipeline(SelectKBest(score_func=f_regression, k=self.k), RidgeCV()), 
             "dummy":  make_pipeline(DummyRegressor(strategy='mean'))
         }
 
@@ -121,6 +125,7 @@ class PlotResults:
         else:
             raise ValueError(f"Unknown colorby value: {colorby}")
         self.model_cols = {"lasso": "C0", "pc_k": "C1", "var_k": "C2", "corr_k": "C3", "dummy": "gray"}
+        self.model_names= {"lasso": "Lasso", "pc_k": "$PC_k$", "var_k": "$Var_k$", "corr_k": "$Corr_k$", "dummy": "Dummy"}
         plt.style.use("default")
 
     def plot_rmse(self, ax):
@@ -133,6 +138,11 @@ class PlotResults:
             ts = result['test_score']
             x = np.linspace(i-0.2, i+0.2, len(ts))
             ax.scatter(x, -result['test_score'], alpha=0.5, color=self.fold_cols, s=20)
+            if i == 0:
+                # Add a legend for the folds, labeled by the leftout sample, but only for the first model
+                for j, col in enumerate(self.fold_cols):
+                    ax.scatter([], [], color=col, label=f'{self.analysis.groups.unique()[j]}')
+            
             # Put whiskers at median and IQR
             median = np.median(-result['test_score'])
             q1 = np.percentile(-result['test_score'], 25)
@@ -140,9 +150,11 @@ class PlotResults:
             ax.hlines(median, i-0.2, i+0.2, color='black', lw=1)
             ax.vlines(i, q1, q3, color='black', lw=1)
         ax.set_xticks(range(len(self.analysis.results)))
-        ax.set_xticklabels(self.analysis.results.keys())
+        ax.set_xticklabels([self.model_names[name] for name in self.analysis.results.keys()])
         ax.set_ylabel("RMSE")
         ax.set_title("RMSE for each model")
+        # Add the legend for the folds, as 3 rows and 4 cols
+        ax.legend(ncol=4, fontsize=8, title="Leftout sample", loc='upper left')
         spines_off(ax)
 
     def plot_sparsity(self, ax):
@@ -194,7 +206,7 @@ class PlotResults:
                 yticklabels=np.arange(1, cm.shape[0]+1),
                 ylabel='True ripeness',
                 xlabel='Predicted ripeness',
-                title=f'Confusion Matrix for {which_model}')
+                title=f'Confusion Matrix for {self.model_names[which_model]}')
         # Rotate the tick labels and set their alignment.
         plt.setp(ax.get_xticklabels(), rotation=45, ha="right",
                     rotation_mode="anchor")
@@ -209,13 +221,22 @@ class PlotResults:
 
     def plot_aggregate_p_values(self, ax):
         # Plot a histogram of the aggregate rand scores, and the aggregate model scores for each model, with a vertical line at the model score
-        ax.hist(-self.analysis.rand_results_agg, bins=int(np.sqrt(len(self.analysis.rand_results_agg))), density=True, alpha=0.7, label='Random')
+        # Histogram should be light gray
+        ax.hist(-self.analysis.rand_results_agg,
+                bins=int(np.sqrt(len(self.analysis.rand_results_agg))),
+                density=True, alpha=0.7, label='Random',
+                color='lightgray'
+                )
         for name, score in self.analysis.model_scores_agg.items():
-            ax.axvline(-score, color=self.model_cols[name], linestyle='--', label=f'{name} (p={self.analysis.p_values_agg[name]:.3f})')
+            label = f'{self.model_names[name]} (p={self.analysis.p_values_agg[name]:.3f})'
+            ax.axvline(-score, color=self.model_cols[name],
+                       linestyle='--',
+                       label=label)
         ax.set_xlabel("Aggregate RMSE")
         ax.set_ylabel("Density")
         ax.set_title("Aggregate RMSE and p-values")
-        ax.legend()
+        ax.set_xlim(0.2,1.2)
+        ax.legend(fontsize=8)
         spines_off(ax)
 
     def plot_per_fold_p_values(self, ax, whiskers=True):
@@ -232,7 +253,7 @@ class PlotResults:
                 ax.hlines(median, i-0.2, i+0.2, color='black', lw=1)
                 ax.vlines(i, q1, q3, color='black', lw=1)
         ax.set_xticks(range(len(self.analysis.p_values_per_fold)))
-        ax.set_xticklabels(self.analysis.p_values_per_fold.keys())
+        ax.set_xticklabels([self.model_names[name] for name in self.analysis.p_values_per_fold.keys()])
         ax.set_ylabel("-log10(p-value)")
         ax.set_title("p-values for each model per fold")
         spines_off(ax)
@@ -256,19 +277,22 @@ class PlotResults:
                   (self.plot_sparsity, ax_sparsity),
                     (self.plot_overlap, ax_overlap),
                     (self.plot_pc_score_vs_coef, ax_pc_vs_coef),
+                    (self.plot_aggregate_p_values, ax_p_agg),
+                    (self.plot_per_fold_p_values, ax_p_fold), 
                     (lambda ax: self.plot_confusion_matrix(ax, "lasso"), ax_cm_lasso),
                     (lambda ax: self.plot_confusion_matrix(ax, "pc_k"), ax_cm_pc),
 #                    (lambda ax: self.plot_confusion_matrix(ax, "var_k"), ax_cm_var),
 #                    (lambda ax: self.plot_confusion_matrix(ax, "corr_k"), ax_cm_corr),
                     (lambda ax: self.plot_confusion_matrix(ax, "dummy"), ax_cm_dummy),
-                    (self.plot_aggregate_p_values, ax_p_agg),
-                    (self.plot_per_fold_p_values, ax_p_fold),
-                     
+                    
                   ]
         
         for plot_func, ax in panels:
             plot_func(ax)
+
+        ax_list = [panels[1] for panels in panels]
         plt.tight_layout()
+        label_axes.label_axes(ax_list, labs="ABCDEFGHI", fontweight='bold', fontsize=14) 
         
     
 # def plot_results(obj):
