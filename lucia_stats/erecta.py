@@ -35,9 +35,9 @@ class Analysis:
 
         self.models = {
             "logreg":  make_pipeline(LogisticRegressionCV(cv=2, penalty='l1', max_iter=50000, Cs=50, solver='saga')),
-            "pc_k":   make_pipeline(PCScoreSelector(k=self.k), LogisticRegression()),
-            "var_k":  make_pipeline(VarianceSelector(k=self.k), LogisticRegression()),
-            "corr_k": make_pipeline(SelectKBest(score_func=f_classif, k=self.k), LogisticRegression()), 
+            "pc_k":   make_pipeline(PCScoreSelector(k=self.k), LogisticRegression(max_iter=10000)),
+            "var_k":  make_pipeline(VarianceSelector(k=self.k), LogisticRegression(max_iter=10000)),
+            "corr_k": make_pipeline(SelectKBest(score_func=f_classif, k=self.k), LogisticRegression(max_iter=10000)), 
             "dummy":  make_pipeline(DummyClassifier(strategy='most_frequent'))
         }
 
@@ -81,7 +81,7 @@ class Analysis:
 
     def compute_p_values(self, n_rand = 100, non_pc = True, agg_fun = np.median):
         self.rand_results = np.array([
-            cross_val_score(make_pipeline((RandomNonPCSelector if non_pc else RandomSelector)(k=self.k, random_state=i), LogisticRegression()),
+            cross_val_score(make_pipeline((RandomNonPCSelector if non_pc else RandomSelector)(k=self.k, random_state=i), LogisticRegression(max_iter=10000)),
                             self.X, self.y,
                             groups=self.groups,
                             cv=self.cv,
@@ -137,17 +137,18 @@ class PlotResults:
         ax.set_xticks(range(len(self.analysis.results)))
         ax.set_xticklabels([self.model_names[name] for name in self.analysis.results.keys()])
         ax.set_ylabel("Accuracy")
-        ax.set_ylim(0,1)
+        ax.set_ylim(-0.05,1.05)
         ax.set_title("Classification accuracy per model")
         # Add the legend for the folds, as 3 rows and 4 cols
-        ax.legend(ncol=4, fontsize=8, title="Left-out replicate", loc='upper left')
+        ax.legend(ncol=4, fontsize=8, title="Left-out replicate")
         spines_off(ax)
 
     def plot_sparsity(self, ax):
         sparsity = self.analysis.sparsity
-        ax.hist(sparsity, bins=np.arange(0, self.analysis.X.shape[1]+1)-0.5, density=False, alpha=0.7)
+        ax.hist(sparsity, bins=np.arange(0, self.analysis.X.shape[1]+1)-0.5, density=False, alpha=0.7, width=0.8, color='C0')
         mean_sparsity = np.mean(sparsity)
         ax.axvline(mean_sparsity, color='red', linestyle='--', label=f'Mean: {mean_sparsity:.2f}')
+        ax.set_xlim(0, np.max(sparsity)+1)
         ax.set_xlabel("Number of odours used") 
         ax.set_ylabel("Count")
         ax.set_title("Classifier sparsity level")
