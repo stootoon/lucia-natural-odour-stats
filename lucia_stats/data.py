@@ -46,3 +46,24 @@ def get_noni_ripeness(do_zscore=False):
     return tidy, odour_cols
 
 
+def get_pandan():
+    pandan_data_gid = 1369326582
+    pandan_url = SHEET_URL(pandan_data_gid)
+    df = pd.read_csv(pandan_url)
+    df = df.set_index('Odour')
+    column_tuples = [col.split('_rep') for col in df.columns]
+    df.columns = pd.MultiIndex.from_tuples(column_tuples, names=['Sample', 'Replicate'])
+    return df
+
+def tidy_pandan(do_zscore=False):
+    df = get_pandan()
+    tidy = df.T.reset_index()
+    tidy.columns.name = None
+    tidy["Replicate"] = tidy["Replicate"].astype(int)
+    meta_cols = ["Sample", "Replicate"]
+    # Strip trailing or leading whitespace from column names
+    tidy.columns = tidy.columns.str.strip()
+    odour_cols = tidy.columns.difference(meta_cols)
+    if do_zscore:
+       tidy[odour_cols] = zscore(tidy[odour_cols].values, axis=1, nan_policy='omit')
+    return tidy, odour_cols
