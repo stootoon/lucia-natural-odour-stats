@@ -84,13 +84,14 @@ class Analysis:
         rng = np.random.default_rng(self.seed)
         row_counts = self.confusion_matrices[name].sum(axis=1)
         n_rows = n_cols = self.confusion_matrices[name].shape[1]
-        self.confusion_matrices["perfect"] = np.diag(row_counts)
+        self.confusion_matrices["perfect"] = np.diag(row_counts).astype(int)
+
         cm_chance = np.zeros((n_rows, n_cols))
         for i, rc in enumerate(row_counts):
             ch = rng.choice(n_cols, rc)
             for j in ch:
                 cm_chance[i, j] += 1
-        self.confusion_matrices["chance"] = cm_chance
+        self.confusion_matrices["chance"] = cm_chance.astype(int)
 
         cm_uniform = 0 * cm_chance
         for i, rc in enumerate(row_counts):
@@ -99,7 +100,7 @@ class Analysis:
             ch = rng.choice(n_cols, rem)
             for j in ch:
                 cm_uniform[i, j] += 1
-        self.confusion_matrices["uniform"] = cm_uniform
+        self.confusion_matrices["uniform"] = cm_uniform.astype(int)
 
 
     def compute_p_values(self, n_rand = 100, non_pc = True, agg_fun = np.median):
@@ -145,7 +146,7 @@ class PlotResults:
         else:
             raise ValueError(f"Unknown colorby value: {colorby}")
         self.model_cols = {"lasso": "C0", "pc_k": "C1", "var_k": "C2", "corr_k": "C3", "dummy": "gray"}
-        self.model_names= {"lasso": "Lasso", "pc_k": "$PC_k$", "var_k": "$Var_k$", "corr_k": "$Corr_k$", "dummy": "Dummy"}
+        self.model_names= {"lasso": "Lasso", "pc_k": "$PC_k$", "var_k": "$Var_k$", "corr_k": "$Corr_k$", "dummy": "Dummy", "perfect": "Perfect", "chance":"Chance", "uniform":"Uniform"}
         plt.style.use("default")
 
     def plot_rmse(self, ax):
@@ -218,7 +219,7 @@ class PlotResults:
         # Annotate the matrix with the counts
         cm = self.analysis.confusion_matrices[which_model]
         cm_normalized = cm.astype('float') / cm.sum(axis=1)[:, np.newaxis]
-        im = ax.imshow(cm_normalized, interpolation='nearest', cmap=plt.cm.Blues)
+        im = ax.imshow(cm_normalized, interpolation='nearest', cmap=plt.cm.Blues, vmin=0, vmax=1)
         ax.figure.colorbar(im, ax=ax)
         ax.set(xticks=np.arange(cm.shape[1]),
                 yticks=np.arange(cm.shape[0]),
@@ -239,7 +240,7 @@ class PlotResults:
                         ha="center", va="center",
                         color="white" if cm_normalized[i, j] > thresh else "black")
 
-    def plot_aggregate_p_values(self, ax):
+    def plot_aggregate_p_values(self, ax, which_models = None):
         # Plot a histogram of the aggregate rand scores, and the aggregate model scores for each model, with a vertical line at the model score
         # Histogram should be light gray
         ax.hist(-self.analysis.rand_results_agg,
@@ -247,7 +248,13 @@ class PlotResults:
                 density=True, alpha=0.7, label='Random',
                 color='lightgray'
                 )
+
+        if which_models is None:
+            which_models = list(self.model_names.keys())
+        
         for name, score in self.analysis.model_scores_agg.items():
+            if name not in which_models:
+                continue
             label = f'{self.model_names[name]} (p={self.analysis.p_values_agg[name]:.3f})'
             ax.axvline(-score, color=self.model_cols[name],
                        linestyle='--',
@@ -289,9 +296,9 @@ class PlotResults:
             (1, 0, "D", self.plot_pc_score_vs_coef),
             (1, 1, "E", self.plot_aggregate_p_values),
             (1, 2, "F", self.plot_per_fold_p_values),
-            (2, 0, "G", lambda ax: self.plot_confusion_matrix(ax, "lasso")),
-            (2, 1, "H", lambda ax: self.plot_confusion_matrix(ax, "pc_k")),
-            (2, 2, "I", lambda ax: self.plot_confusion_matrix(ax, "dummy")),
+            (2, 0, "G", self.plot_confusion_matrix, "lasso"),
+            (2, 1, "H", self.plot_confusion_matrix, "pc_k"),
+            (2, 2, "I", self.plot_confusion_matrix, "dummy"),
         ]
 
     def plot_figure(self, panels=None, shape=(3, 3), figsize=(15, 10)):
