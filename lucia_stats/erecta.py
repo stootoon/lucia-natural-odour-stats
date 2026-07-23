@@ -196,7 +196,7 @@ class PlotResults:
         cm = self.analysis.confusion_matrices[which_model]
         row_sums = cm.sum(axis=1)[:, np.newaxis]
         cm_normalized = np.divide(cm, row_sums, out=np.zeros_like(cm, dtype=float), where=row_sums!=0) 
-        im = ax.imshow(cm_normalized, interpolation='nearest', cmap=plt.cm.Blues)
+        im = ax.imshow(cm_normalized, interpolation='nearest', cmap=plt.cm.Blues, vmin=0,vmax=1)
         ax.figure.colorbar(im, ax=ax)
         labels = self.analysis.classes_
         ax.set(xticks=np.arange(cm.shape[1]),
