@@ -17,7 +17,7 @@ warnings.filterwarnings('ignore', category=FutureWarning)
 
 sys.path.append(os.environ["GIT"])
 from label_axes import label_axes
-from lucia_stats.common import PCScoreSelector, VarianceSelector, RandomSelector, RandomNonPCSelector, Figure
+from lucia_stats.common import PCScoreSelector, VarianceSelector, RandomSelector, RandomNonPCSelector, Figure, create_mock_confusion_matrix
 from lucia_stats.data import get_noni_ripeness
 
 
@@ -84,7 +84,7 @@ class Analysis:
         row_counts = self.confusion_matrices[name].sum(axis=1)
         n_rows = n_cols = self.confusion_matrices[name].shape[1]
         for fld in ["perfect", "chance", "uniform"]:
-            self.confusion_matrices[fld] = common.create_mock_confusion_matrix(fld, n_rows, row_counts, self.seed)
+            self.confusion_matrices[fld] = create_mock_confusion_matrix(fld, n_rows, row_counts, self.seed)
 
 
     def compute_p_values(self, n_rand = 100, non_pc = True, agg_fun = np.median):

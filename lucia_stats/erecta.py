@@ -13,7 +13,7 @@ from sklearn.metrics import confusion_matrix
 import warnings
 warnings.filterwarnings('ignore', category=FutureWarning)
 
-from lucia_stats.common import PCScoreSelector, VarianceSelector, RandomSelector, RandomNonPCSelector, Figure
+from lucia_stats.common import PCScoreSelector, VarianceSelector, RandomSelector, RandomNonPCSelector, Figure, create_mock_confusion_matrix
 from lucia_stats.data import tidy_pandan 
 
 
@@ -77,7 +77,7 @@ class Analysis:
         row_counts = self.confusion_matrices[name].sum(axis=1)
         n_rows = n_cols = self.confusion_matrices[name].shape[1]
         for fld in ["perfect", "chance", "uniform"]:
-            self.confusion_matrices[fld] = common.create_mock_confusion_matrix(fld, n_rows, row_counts, self.seed)
+            self.confusion_matrices[fld] = create_mock_confusion_matrix(fld, n_rows, row_counts, self.seed)
 
 
     def compute_p_values(self, n_rand = 100, non_pc = True, agg_fun = np.median):
@@ -117,7 +117,12 @@ class PlotResults:
         self.n_classes = len(self.analysis.classes_)
         self.chance = 1.0 / self.n_classes
         self.model_cols = {"logreg": "C0", "pc_k": "C1", "var_k": "C2", "corr_k": "C3", "dummy": "gray"}
-        self.model_names= {"logreg": "LogReg", "pc_k": "$PC_k$", "var_k": "$Var_k$", "corr_k": "$Corr_k$", "dummy": "Dummy"}
+        self.model_names= {"logreg": "LogReg", "pc_k": "$PC_k$",
+                           "var_k": "$Var_k$", "corr_k": "$Corr_k$", "dummy": "Dummy",
+                           "perfect": "Perfect",
+                           "uniform": "Uniform",
+                           "chance": "Chance",
+                           }
         plt.style.use("default")
 
     def plot_accuracy(self, ax):
@@ -213,7 +218,7 @@ class PlotResults:
                         ha="center", va="center",
                         color="white" if cm_normalized[i, j] > thresh else "black")
 
-    def plot_aggregate_p_values(self, ax):
+    def plot_aggregate_p_values(self, ax, which_models = None):
         # Plot a histogram of the aggregate rand scores, and the aggregate model scores for each model, with a vertical line at the model score
         # Histogram should be light gray
         ax.hist(self.analysis.rand_results_agg,
@@ -221,7 +226,13 @@ class PlotResults:
                 density=True, alpha=0.7, label='Random',
                 color='lightgray'
                 )
+
+        if which_models is None:
+            which_models = list(self.model_names.keys())
+        
         for name, score in self.analysis.model_scores_agg.items():
+            if name not in which_models:
+                continue
             label = f'{self.model_names[name]} (p={self.analysis.p_values_agg[name]:.3f})'
             ax.axvline(score, color=self.model_cols[name],
                        linestyle='--',

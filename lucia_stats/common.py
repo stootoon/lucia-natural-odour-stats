@@ -82,7 +82,7 @@ def create_mock_confusion_matrix(which_type, n_rows, row_counts, seed):
     elif which_type == "uniform":
         for i, rc in enumerate(row_counts):
             cm[i, :] = rc//n_cols
-            rem = int(rc - np.sum(cm_uniform[i, :]))
+            rem = int(rc - np.sum(cm[i, :]))
             ch = rng.choice(n_cols, rem)
             for j in ch:
                 cm[i, j] += 1
