@@ -1,9 +1,7 @@
-import os, sys
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib import cm
-from matplotlib.gridspec import GridSpec
 from tqdm import tqdm
 from sklearn.model_selection import LeaveOneGroupOut
 from sklearn.linear_model import LogisticRegression, LogisticRegressionCV 
@@ -15,11 +13,7 @@ from sklearn.metrics import confusion_matrix
 import warnings
 warnings.filterwarnings('ignore', category=FutureWarning)
 
-sys.path.append(os.environ["GIT"])
-
-from label_axes import label_axes
-
-from lucia_stats.common import PCScoreSelector, VarianceSelector, RandomSelector, RandomNonPCSelector
+from lucia_stats.common import PCScoreSelector, VarianceSelector, RandomSelector, RandomNonPCSelector, Figure
 from lucia_stats.data import tidy_pandan 
 
 
@@ -260,40 +254,25 @@ class PlotResults:
         spines_off(ax)
         
 
-    def plot_figure(self):
-        plt.figure(figsize=(15,10))
-        gs = GridSpec(3,3)
-        ax_acc        = plt.subplot(gs[0,0])
-        ax_sparsity   = plt.subplot(gs[0,1])
-        ax_overlap    = plt.subplot(gs[0,2])
-        ax_pc_vs_coef = plt.subplot(gs[1,0])
-        ax_cm_logreg  = plt.subplot(gs[2,0])
-        ax_cm_pc      = plt.subplot(gs[2,1])
-        #ax_cm_var     = plt.subplot(gs[2,0])
-        #ax_cm_corr    = plt.subplot(gs[2,1])
-        ax_cm_dummy   = plt.subplot(gs[2,2])
-        ax_p_agg      = plt.subplot(gs[1,1])
-        ax_p_fold     = plt.subplot(gs[1,2])
-        panels =   [(self.plot_accuracy, ax_acc),
-                    (self.plot_sparsity, ax_sparsity),
-                    (self.plot_overlap, ax_overlap),
-                    (self.plot_pc_score_vs_coef, ax_pc_vs_coef),
-                    (self.plot_aggregate_p_values, ax_p_agg),
-                    (self.plot_per_fold_p_values, ax_p_fold), 
-                    (lambda ax: self.plot_confusion_matrix(ax, "logreg"), ax_cm_logreg),
-                    (lambda ax: self.plot_confusion_matrix(ax, "pc_k"), ax_cm_pc),
-#                    (lambda ax: self.plot_confusion_matrix(ax, "var_k"), ax_cm_var),
-#                    (lambda ax: self.plot_confusion_matrix(ax, "corr_k"), ax_cm_corr),
-                    (lambda ax: self.plot_confusion_matrix(ax, "dummy"), ax_cm_dummy),
-                    
-                  ]
-        
-        for plot_func, ax in panels:
-            plot_func(ax)
+    def default_panels(self):
+        # (row, col, label, plot_func) for the main figure. row/col may be an
+        # int, a slice, or a (start, stop) tuple to span multiple cells.
+        return [
+            (0, 0, "A", self.plot_accuracy),
+            (0, 1, "B", self.plot_sparsity),
+            (0, 2, "C", self.plot_overlap),
+            (1, 0, "D", self.plot_pc_score_vs_coef),
+            (1, 1, "E", self.plot_aggregate_p_values),
+            (1, 2, "F", self.plot_per_fold_p_values),
+            (2, 0, "G", self.plot_confusion_matrix, "logreg"),
+            (2, 1, "H", self.plot_confusion_matrix, "pc_k"),
+            (2, 2, "I", self.plot_confusion_matrix, "dummy"),
+        ]
 
-        ax_list = [ax for _,ax  in panels]
-        plt.tight_layout()
-        label_axes.label_axes(ax_list, labs="ABCDEFGHI", fontweight='bold', fontsize=14) 
+    def plot_figure(self, panels=None, shape=(3, 3), figsize=(15, 10)):
+        if panels is None:
+            panels = self.default_panels()
+        return Figure(shape=shape, figsize=figsize).plot(panels)
         
     
 # def plot_results(obj):
