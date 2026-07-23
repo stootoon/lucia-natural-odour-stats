@@ -39,9 +39,10 @@ class Figure:
         return v
 
     def plot(self, panels):
-        # Lay out a figure from a list of (row, col, label, plot_func) panels.
+        # Lay out a figure from a list of (row, col, label, plot_func, *args) panels.
         # row/col may be an int, a slice, or a (start, stop) tuple to span cells.
-        # plot_func is any callable taking a single Axes. label may be None to skip.
+        # plot_func is any callable; it is called as plot_func(ax, *args), so any
+        # trailing tuple elements are forwarded to it. label may be None to skip.
         shape = self.shape
         if shape is None:
             nrows = max(self._cell_extent(row) for row, col, *_ in panels) + 1
@@ -53,9 +54,9 @@ class Figure:
 
         self.ax = []
         labeled = []
-        for row, col, label, plot_func in panels:
+        for row, col, label, plot_func, *fn_args in panels:
             ax = plt.subplot(gs[self._cell_index(row), self._cell_index(col)])
-            plot_func(ax)
+            plot_func(ax, *fn_args)
             self.ax.append(ax)
             if label is not None:
                 labeled.append((ax, label))
