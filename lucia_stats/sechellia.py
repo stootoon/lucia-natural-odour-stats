@@ -81,26 +81,10 @@ class Analysis:
                     self.confusion_matrices[name][true-1, pred-1] += 1
 
         # Add the perfect and chance confusion matrices
-        rng = np.random.default_rng(self.seed)
         row_counts = self.confusion_matrices[name].sum(axis=1)
         n_rows = n_cols = self.confusion_matrices[name].shape[1]
-        self.confusion_matrices["perfect"] = np.diag(row_counts).astype(int)
-
-        cm_chance = np.zeros((n_rows, n_cols))
-        for i, rc in enumerate(row_counts):
-            ch = rng.choice(n_cols, rc)
-            for j in ch:
-                cm_chance[i, j] += 1
-        self.confusion_matrices["chance"] = cm_chance.astype(int)
-
-        cm_uniform = 0 * cm_chance
-        for i, rc in enumerate(row_counts):
-            cm_uniform[i, :] = rc//n_cols
-            rem = int(rc - np.sum(cm_uniform[i, :]))
-            ch = rng.choice(n_cols, rem)
-            for j in ch:
-                cm_uniform[i, j] += 1
-        self.confusion_matrices["uniform"] = cm_uniform.astype(int)
+        for fld in ["perfect", "chance", "uniform"]:
+            self.confusion_matrices[fld] = common.create_mock_confusion_matrix(fld, n_rows, row_counts, self.seed)
 
 
     def compute_p_values(self, n_rand = 100, non_pc = True, agg_fun = np.median):

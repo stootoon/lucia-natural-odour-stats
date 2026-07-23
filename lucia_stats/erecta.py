@@ -24,7 +24,7 @@ from lucia_stats.data import tidy_pandan
 
 
 class Analysis:
-    def __init__(self, k=6):
+    def __init__(self, seed=0, k=6):
         self.df, self.odour_cols = tidy_pandan(do_zscore=True)
         self.X = self.df[self.odour_cols]
         self.y = self.df['Sample']
@@ -32,6 +32,7 @@ class Analysis:
         self.groups = self.df['Replicate']
         self.cv = LeaveOneGroupOut()
         self.k = k
+        self.seed = seed
 
         self.models = {
             "logreg":  make_pipeline(LogisticRegressionCV(cv=2, penalty='l1', max_iter=50000, Cs=50, solver='saga')),
@@ -77,6 +78,12 @@ class Analysis:
                 y_true = self.y.iloc[test_idx]
                 # Use the true and pred as indices to increment the confusion matrix
                 self.confusion_matrices[name] += confusion_matrix(y_true, y_pred, labels=self.classes_)
+    
+        # Add the perfect and chance confusion matrices
+        row_counts = self.confusion_matrices[name].sum(axis=1)
+        n_rows = n_cols = self.confusion_matrices[name].shape[1]
+        for fld in ["perfect", "chance", "uniform"]:
+            self.confusion_matrices[fld] = common.create_mock_confusion_matrix(fld, n_rows, row_counts, self.seed)
 
 
     def compute_p_values(self, n_rand = 100, non_pc = True, agg_fun = np.median):

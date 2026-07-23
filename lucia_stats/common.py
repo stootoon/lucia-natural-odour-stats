@@ -68,6 +68,28 @@ class Figure:
 
         return self.fig, self.ax
 
+def create_mock_confusion_matrix(which_type, n_rows, row_counts, seed):
+    rng = np.random.default_rng(seed)
+    n_cols = n_rows
+    cm = np.zeros((n_rows, n_cols))
+    if which_type == "perfect":
+        return np.diag(row_counts).astype(int)
+    elif which_type == "chance":
+        for i, rc in enumerate(row_counts):
+            ch = rng.choice(n_cols, rc)
+            for j in ch:
+                cm[i, j] += 1
+    elif which_type == "uniform":
+        for i, rc in enumerate(row_counts):
+            cm[i, :] = rc//n_cols
+            rem = int(rc - np.sum(cm_uniform[i, :]))
+            ch = rng.choice(n_cols, rem)
+            for j in ch:
+                cm[i, j] += 1
+    else:
+        raise ValueError(f"Unknown which_type: {which_type}")
+
+    return cm.astype(int)
 
 def get_pc_score(X):
     pca = PCA(n_components=3)
