@@ -18,17 +18,20 @@ warnings.filterwarnings('ignore', category=FutureWarning)
 sys.path.append(os.environ["GIT"])
 from label_axes import label_axes
 from lucia_stats.common import PCScoreSelector, VarianceSelector, RandomSelector, RandomNonPCSelector, Figure
-rom lucia_stats.data import get_noni_ripeness
+from lucia_stats.data import get_noni_ripeness
 
 
 class Analysis:
-    def __init__(self, k=6):
+    def __init__(self, k=6, seed=0):
         self.df, self.odour_cols = get_noni_ripeness(do_zscore=True)
-        self.X = self.df[self.odour_cols].values
+        self.X = self.df[self.odour_cols]
         self.y = self.df['Ripeness'].astype(float)
         self.groups = self.df['Sample']
         self.cv = LeaveOneGroupOut()
         self.k = k
+        self.seed = 0
+
+        np.random.seed(self.seed)
 
         alphas = np.logspace(-3, 3, 10)
         
@@ -78,6 +81,26 @@ class Analysis:
                 # Use the true and pred as indices to increment the confusion matrix
                 for true, pred in zip(y_true_rounded, y_pred_rounded):
                     self.confusion_matrices[name][true-1, pred-1] += 1
+
+        # Add the perfect and chance confusion matrices
+        row_counts = self.confusion_matrices[name].sum(axis=1)
+        n_rows = n_cols = self.confusion_matrices[name].shape[1]
+        self.confusion_matrices["perfect"] = np.diag(row_counts)
+        cm_chance = np.zeros((n_rows, n_cols)) 
+        for i, rc in enumerate(row_counts):
+            ch = np.random.choice(n_cols, rc)
+            for j in ch:
+                cm_chance[i, j] += 1
+        self.confusion_matrices["chance"] = cm_chance
+
+        cm_uniform = 0 * cm_chance
+        for i, rc in enumerate(row_counts):
+            cm_uniform[i, :] = rc//n_cols
+            rem = int(rc - np.sum(cm_uniform[i, :]))
+            ch = np.random.choice(n_cols, rem)
+            for j in ch:
+                cm_uniform[i, j] += 1
+        self.confusion_matrices["uniform"] = cm_uniform
 
 
     def compute_p_values(self, n_rand = 100, non_pc = True, agg_fun = np.median):
