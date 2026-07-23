@@ -1,8 +1,14 @@
+import os, sys
 import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.gridspec import GridSpec
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.feature_selection import SelectorMixin
 from sklearn.utils.validation import check_array, check_is_fitted
 from sklearn.decomposition import PCA
+
+sys.path.append(os.environ["GIT"])
+from label_axes import label_axes
 
 class Computation:
     def __init__(self, *args, **kwargs):
@@ -10,6 +16,57 @@ class Computation:
         
     def compute(self, *args, **kwargs):
         raise NotImplementedError("compute() method not implemented") 
+
+class Figure:
+    def __init__(self, shape=None, figsize=(15, 10)):
+        self.shape = shape
+        self.figsize = figsize
+        self.fig = None
+        self.ax = None
+
+    @staticmethod
+    def _cell_index(v):
+        # Normalize an int / slice / (start, stop) tuple into a GridSpec index.
+        return slice(*v) if isinstance(v, tuple) else v
+
+    @staticmethod
+    def _cell_extent(v):
+        # Largest cell index touched, for inferring the grid shape.
+        if isinstance(v, tuple):
+            return v[1] - 1
+        if isinstance(v, slice):
+            return (v.stop or 0) - 1
+        return v
+
+    def plot(self, panels):
+        # Lay out a figure from a list of (row, col, label, plot_func) panels.
+        # row/col may be an int, a slice, or a (start, stop) tuple to span cells.
+        # plot_func is any callable taking a single Axes. label may be None to skip.
+        shape = self.shape
+        if shape is None:
+            nrows = max(self._cell_extent(row) for row, col, *_ in panels) + 1
+            ncols = max(self._cell_extent(col) for row, col, *_ in panels) + 1
+            shape = (nrows, ncols)
+
+        self.fig = plt.figure(figsize=self.figsize)
+        gs = GridSpec(*shape)
+
+        self.ax = []
+        labeled = []
+        for row, col, label, plot_func in panels:
+            ax = plt.subplot(gs[self._cell_index(row), self._cell_index(col)])
+            plot_func(ax)
+            self.ax.append(ax)
+            if label is not None:
+                labeled.append((ax, label))
+
+        plt.tight_layout()
+        if labeled:
+            ax_list, labs = zip(*labeled)
+            label_axes.label_axes(list(ax_list), labs=list(labs), fontweight='bold', fontsize=14)
+
+        return self.fig, self.ax
+
 
 def get_pc_score(X):
     pca = PCA(n_components=3)
