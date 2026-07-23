@@ -16,17 +16,15 @@ import warnings
 warnings.filterwarnings('ignore', category=FutureWarning)
 
 sys.path.append(os.environ["GIT"])
-
 from label_axes import label_axes
-
 from lucia_stats.common import PCScoreSelector, VarianceSelector, RandomSelector, RandomNonPCSelector, Figure
-from lucia_stats.data import get_noni_ripeness
+rom lucia_stats.data import get_noni_ripeness
 
 
 class Analysis:
     def __init__(self, k=6):
         self.df, self.odour_cols = get_noni_ripeness(do_zscore=True)
-        self.X = self.df[self.odour_cols]
+        self.X = self.df[self.odour_cols].values
         self.y = self.df['Ripeness'].astype(float)
         self.groups = self.df['Sample']
         self.cv = LeaveOneGroupOut()
@@ -65,7 +63,7 @@ class Analysis:
         pc_selected = [estimator.named_steps['pcscoreselector'].get_support() for estimator in self.results['pc_k']['estimator']]
         var_selected = [estimator.named_steps['varianceselector'].get_support() for estimator in self.results['var_k']['estimator']]
         self.pc_var_overlap = [set(self.odour_cols[pc & var].tolist()) for pc, var in zip(pc_selected, var_selected)]
-        
+       
     def compute_confusion_matrices(self):
         # Build a confusion matrix for the lasso estimator by aggregating predictions over folds
         # Round the predictions to 1,2,3,4, and compare against the true values
