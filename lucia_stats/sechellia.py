@@ -29,9 +29,7 @@ class Analysis:
         self.groups = self.df['Sample']
         self.cv = LeaveOneGroupOut()
         self.k = k
-        self.seed = 0
-
-        np.random.seed(self.seed)
+        self.seed = seed
 
         alphas = np.logspace(-3, 3, 10)
         
@@ -83,12 +81,13 @@ class Analysis:
                     self.confusion_matrices[name][true-1, pred-1] += 1
 
         # Add the perfect and chance confusion matrices
+        rng = np.random.default_rng(self.seed)
         row_counts = self.confusion_matrices[name].sum(axis=1)
         n_rows = n_cols = self.confusion_matrices[name].shape[1]
         self.confusion_matrices["perfect"] = np.diag(row_counts)
-        cm_chance = np.zeros((n_rows, n_cols)) 
+        cm_chance = np.zeros((n_rows, n_cols))
         for i, rc in enumerate(row_counts):
-            ch = np.random.choice(n_cols, rc)
+            ch = rng.choice(n_cols, rc)
             for j in ch:
                 cm_chance[i, j] += 1
         self.confusion_matrices["chance"] = cm_chance
@@ -97,7 +96,7 @@ class Analysis:
         for i, rc in enumerate(row_counts):
             cm_uniform[i, :] = rc//n_cols
             rem = int(rc - np.sum(cm_uniform[i, :]))
-            ch = np.random.choice(n_cols, rem)
+            ch = rng.choice(n_cols, rem)
             for j in ch:
                 cm_uniform[i, j] += 1
         self.confusion_matrices["uniform"] = cm_uniform
