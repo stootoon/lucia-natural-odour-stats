@@ -9,6 +9,8 @@ def get_noni():
     noni_url = SHEET_URL(noni_data_gid)
     df = pd.read_csv(noni_url)
     df = df.set_index('Odour')
+    # InChIKey is per-odour metadata, not a sample_rep column
+    df = df.drop(columns='InChIKey', errors='ignore')
     column_tuples = [col.split('_rep') for col in df.columns]
     df.columns = pd.MultiIndex.from_tuples(column_tuples, names=['Sample', 'Replicate'])
     return df
@@ -51,6 +53,8 @@ def get_pandan():
     pandan_url = SHEET_URL(pandan_data_gid)
     df = pd.read_csv(pandan_url)
     df = df.set_index('Odour')
+    # InChIKey is per-odour metadata, not a sample_rep column
+    df = df.drop(columns='InChIKey', errors='ignore')
     column_tuples = [col.split('_rep') for col in df.columns]
     df.columns = pd.MultiIndex.from_tuples(column_tuples, names=['Sample', 'Replicate'])
     return df
