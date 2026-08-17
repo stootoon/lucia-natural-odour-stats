@@ -17,8 +17,8 @@ warnings.filterwarnings('ignore', category=FutureWarning)
 
 sys.path.append(os.environ["GIT"])
 from label_axes import label_axes
-from lucia_stats.common import PCScoreSelector, VarianceSelector, RandomSelector, RandomNonPCSelector, Figure, create_mock_confusion_matrix
-from lucia_stats.data import get_noni_ripeness
+from lucia_stats.src.common import PCScoreSelector, VarianceSelector, RandomSelector, RandomNonPCSelector, Figure, create_mock_confusion_matrix
+from lucia_stats.src.data import get_noni_ripeness
 
 
 class Analysis:

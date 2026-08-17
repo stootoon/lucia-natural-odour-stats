@@ -13,8 +13,8 @@ from sklearn.metrics import confusion_matrix
 import warnings
 warnings.filterwarnings('ignore', category=FutureWarning)
 
-from lucia_stats.common import PCScoreSelector, VarianceSelector, RandomSelector, RandomNonPCSelector, Figure, create_mock_confusion_matrix
-from lucia_stats.data import tidy_pandan 
+from lucia_stats.src.common import PCScoreSelector, VarianceSelector, RandomSelector, RandomNonPCSelector, Figure, create_mock_confusion_matrix
+from lucia_stats.src.data import tidy_pandan
 
 
 class Analysis:
