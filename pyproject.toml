@@ -1,0 +1,15 @@
+[project]
+name = "lucia-natural-odour-stats"
+version = "1.0.0"
+
+[tool.setuptools]
+packages = [
+"lucia_stats",
+"lucia_stats.src",
+"lucia_stats.analyses"
+]
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
