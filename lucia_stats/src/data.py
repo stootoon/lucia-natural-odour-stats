@@ -4,11 +4,14 @@ from scipy.stats import zscore
 spreadsheet_id = "1rF6KRdGkyQq3VtTHx7fhZoprIboU4AooWy5Jqx5fbeg"
 SHEET_URL = lambda gid: f"https://docs.google.com/spreadsheets/d/{spreadsheet_id}/export?format=csv&gid={gid}"
 
-def get_noni():
+def get_noni_csv():
     noni_data_gid = 365555364
     noni_url = SHEET_URL(noni_data_gid)
     df = pd.read_csv(noni_url)
-    df = df.set_index('Odour')
+    return df
+
+def get_noni():
+    df = get_noni_csv().set_index('Odour')
     # InChIKey is per-odour metadata, not a sample_rep column
     df = df.drop(columns='InChIKey', errors='ignore')
     column_tuples = [col.split('_rep') for col in df.columns]
@@ -47,12 +50,14 @@ def get_noni_ripeness(do_zscore=False):
 
     return tidy, odour_cols
 
-
-def get_pandan():
+def get_pandan_csv():
     pandan_data_gid = 1369326582
     pandan_url = SHEET_URL(pandan_data_gid)
     df = pd.read_csv(pandan_url)
-    df = df.set_index('Odour')
+    return df
+
+def get_pandan():
+    df = get_pandan_csv().set_index('Odour')
     # InChIKey is per-odour metadata, not a sample_rep column
     df = df.drop(columns='InChIKey', errors='ignore')
     column_tuples = [col.split('_rep') for col in df.columns]
