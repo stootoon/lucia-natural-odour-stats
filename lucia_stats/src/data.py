@@ -76,3 +76,9 @@ def tidy_pandan(do_zscore=False):
     if do_zscore:
        tidy[odour_cols] = zscore(tidy[odour_cols].values, axis=1, nan_policy='omit')
     return tidy, odour_cols
+
+def get_mel_csv():
+    mel_data_gid = 201202585
+    mel_url = SHEET_URL(mel_data_gid)
+    df = pd.read_csv(mel_url)
+    return df
