@@ -111,6 +111,14 @@ class Analysis:
         var_selected = [est.named_steps['varianceselector'].get_support() for est in self.results['var_k']['estimator']]
         self.pc_var_overlap = [set(self.odour_cols[pc & var].tolist()) for pc, var in zip(pc_selected, var_selected)]
 
+    def compute_logreg_pc_overlap(self):
+        # Overlap between the odours used by the L1 logistic model (non-zero
+        # coefficient for any class) and those selected by the PCScoreSelector
+        logreg_selected = [np.any(est.named_steps['logisticregressioncv'].coef_ != 0, axis=0)
+                           for est in self.results['logreg_l1']['estimator']]
+        pc_selected = [est.named_steps['pcscoreselector'].get_support() for est in self.results['pc_k']['estimator']]
+        self.logreg_pc_overlap = [set(self.odour_cols[lr & pc].tolist()) for lr, pc in zip(logreg_selected, pc_selected)]
+
     def compute_confusion_matrices(self):
         # Aggregate test predictions over folds. Predictions are class labels
         # (1..5), so no rounding is needed.
@@ -216,12 +224,18 @@ class PlotResults:
         spines_off(ax)
 
     def plot_overlap(self, ax):
-        # Histogram of the overlap of features selected by PCScoreSelector and VarianceSelector
-        overlap_counts = [len(overlap) for overlap in self.analysis.pc_var_overlap]
-        ax.hist(overlap_counts, bins=np.arange(0, self.analysis.k + 2) - 0.5, density=False, alpha=0.7)
+        # Histograms of the per-fold overlap of the PC_k features with the
+        # Var_k features and (when computed) with the odours used by the L1
+        # logistic model.
+        bins = np.arange(0, self.analysis.k + 2) - 0.5
+        counts = {'$PC_k \\cap Var_k$': [len(o) for o in self.analysis.pc_var_overlap]}
+        if hasattr(self.analysis, 'logreg_pc_overlap'):
+            counts['$PC_k \\cap$ LogReg$_{L1}$'] = [len(o) for o in self.analysis.logreg_pc_overlap]
+        ax.hist(list(counts.values()), bins=bins, density=False, alpha=0.7, label=list(counts.keys()))
         ax.set_xlabel("Number of overlapping features")
         ax.set_ylabel("Count")
-        ax.set_title("Overlap of $PC_k$ and $Var_k$ features")
+        ax.set_title("Feature overlap with $PC_k$")
+        ax.legend(fontsize=8)
         spines_off(ax)
 
     def plot_pc_score_vs_coef(self, ax):
