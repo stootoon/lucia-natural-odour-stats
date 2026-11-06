@@ -119,6 +119,18 @@ class Analysis:
         pc_selected = [est.named_steps['pcscoreselector'].get_support() for est in self.results['pc_k']['estimator']]
         self.logreg_pc_overlap = [set(self.odour_cols[lr & pc].tolist()) for lr, pc in zip(logreg_selected, pc_selected)]
 
+    def compute_selection_frequencies(self):
+        # For each odour, in how many folds it was used by the L1 logistic
+        # model (non-zero coefficient for any class) and in how many folds it
+        # was in the PCScoreSelector's top k.
+        logreg_sel = [np.any(est.named_steps['logisticregressioncv'].coef_ != 0, axis=0)
+                      for est in self.results['logreg_l1']['estimator']]
+        pc_sel = [est.named_steps['pcscoreselector'].get_support() for est in self.results['pc_k']['estimator']]
+        self.selection_freq = pd.DataFrame({
+            'logreg_l1': np.sum(logreg_sel, axis=0),
+            'pc_k': np.sum(pc_sel, axis=0),
+        }, index=self.odour_cols)
+
     def compute_confusion_matrices(self):
         # Aggregate test predictions over folds. Predictions are class labels
         # (1..5), so no rounding is needed.
@@ -250,6 +262,30 @@ class PlotResults:
         ax.set_xlabel("PC Score")
         ax.set_ylabel("max |LogReg$_{L1}$ coefficient|")
         ax.set_title("PC Score vs LogReg$_{L1}$ Coefficient")
+        spines_off(ax)
+
+    def plot_selection_frequency(self, ax, top_n=10):
+        # Horizontal grouped bars: for the top_n most-selected odours, the
+        # number of folds in which each was used by the L1 logistic model and
+        # selected by the PCScoreSelector.
+        freq = self.analysis.selection_freq
+        n_folds = len(self.analysis.results['logreg_l1']['test_score'])
+        totals = freq.sum(axis=1)
+        top = totals[totals > 0].sort_values(ascending=False, kind='stable').head(top_n).index
+        f = freq.loc[top]
+        y = np.arange(len(top))
+        h = 0.38
+        ax.barh(y - h / 2, f['logreg_l1'], height=h, color=self.model_cols['logreg_l1'],
+                alpha=0.8, label=self.model_names['logreg_l1'])
+        ax.barh(y + h / 2, f['pc_k'], height=h, color=self.model_cols['pc_k'],
+                alpha=0.8, label=self.model_names['pc_k'])
+        ax.set_yticks(y)
+        ax.set_yticklabels(top, fontsize=8)
+        ax.invert_yaxis()  # most frequently selected at the top
+        ax.set_xlim(0, n_folds)
+        ax.set_xlabel(f"Folds selected (of {n_folds})")
+        ax.set_title(f"Selection frequency of top {len(top)} odours")
+        ax.legend(fontsize=8, loc='lower right')
         spines_off(ax)
 
     def plot_confusion_matrix(self, ax, which_model):
