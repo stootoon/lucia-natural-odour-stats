@@ -6,9 +6,10 @@ from matplotlib import cm
 from scipy.stats import zscore
 from tqdm import tqdm
 from sklearn.model_selection import LeaveOneGroupOut, cross_validate, cross_val_score
-from sklearn.linear_model import LogisticRegression, LogisticRegressionCV
-from sklearn.feature_selection import SelectKBest, f_classif
-from sklearn.dummy import DummyClassifier
+from sklearn.linear_model import (LogisticRegression, LogisticRegressionCV,
+                                  LinearRegression, LassoCV, RidgeCV)
+from sklearn.feature_selection import SelectKBest, f_classif, f_regression
+from sklearn.dummy import DummyClassifier, DummyRegressor
 from sklearn.pipeline import make_pipeline
 import warnings
 warnings.filterwarnings('ignore', category=FutureWarning)
@@ -58,10 +59,21 @@ def get_independent_ripeness(do_zscore=False):
 
 
 class Analysis:
+    """Classify ripeness stage with an L1 logistic model and K-odour selectors.
+
+    Subclasses can swap the sparse model and the prediction task by overriding
+    the class attributes and the _build_models / _predict_stages /
+    _null_estimator hooks (see RegressionAnalysis).
+    """
+    sparse_model = "logreg_l1"       # key of the sparse model in self.models
+    sparse_step = "logisticregressioncv"  # its named_steps entry
+    scoring = "accuracy"
+    target_dtype = int
+
     def __init__(self, k=6, seed=0, inner_cv=3):
         self.df, self.odour_cols = get_independent_ripeness(do_zscore=True)
         self.X = self.df[self.odour_cols]
-        self.y = self.df['Ripeness'].astype(int)
+        self.y = self.df['Ripeness'].astype(self.target_dtype)
         # Each column is a different fruit, so each is its own group and
         # leave-one-group-out is leave-one-fruit-out.
         self.groups = self.df['Sample']
@@ -69,13 +81,17 @@ class Analysis:
         self.k = k
         self.seed = seed
         self.n_classes = len(STAGES)
+        self.default_agg = np.mean
+        self.models = self._build_models(inner_cv)
 
-        self.models = {
+    # ------------------------------------------------------------------ hooks
+    def _build_models(self, inner_cv):
+        return {
             "logreg_l1": make_pipeline(
                 LogisticRegressionCV(Cs=np.logspace(-2, 2, 10), cv=inner_cv,
                                      penalty='l1', solver='saga',
                                      scoring='accuracy', max_iter=50000,
-                                     random_state=seed)),
+                                     random_state=self.seed)),
             "pc_k":   make_pipeline(PCScoreSelector(k=self.k), LogisticRegression(max_iter=5000)),
             "var_k":  make_pipeline(VarianceSelector(k=self.k), LogisticRegression(max_iter=5000)),
             "corr_k": make_pipeline(SelectKBest(score_func=f_classif, k=self.k), LogisticRegression(max_iter=5000)),
@@ -83,9 +99,26 @@ class Analysis:
             # held-out class is always the least frequent in training, so it is
             # never predicted and accuracy is 0); uniform guessing sits at the
             # 1/n_classes chance level instead.
-            "dummy":  make_pipeline(DummyClassifier(strategy='uniform', random_state=seed)),
+            "dummy":  make_pipeline(DummyClassifier(strategy='uniform', random_state=self.seed)),
         }
 
+    def _null_estimator(self):
+        # Estimator fit on the random K odours for the null distribution
+        return LogisticRegression(max_iter=5000)
+
+    def _sparse_coef(self, est):
+        # Coefficients of the sparse model, as (n_classes_or_1, n_features)
+        return np.atleast_2d(est.named_steps[self.sparse_step].coef_)
+
+    def _sparse_support(self, est):
+        # Which odours the sparse model uses: non-zero coefficient for any class
+        return np.any(self._sparse_coef(est) != 0, axis=0)
+
+    def _predict_stages(self, est, X):
+        # Predictions as integer stage labels (classification: already labels)
+        return est.predict(X).astype(int)
+
+    # --------------------------------------------------------------- analysis
     def fit_models(self, results=None):
         if results is not None:
             self.results = results
@@ -93,17 +126,15 @@ class Analysis:
             self.results = {name: cross_validate(model, self.X, self.y,
                                                  groups=self.groups,
                                                  cv=self.cv,
-                                                 scoring='accuracy',
+                                                 scoring=self.scoring,
                                                  return_indices=True,
                                                  return_estimator=True) for name, model in self.models.items()}
         return self.results
 
     def compute_sparsity(self):
-        # Number of odours used by the L1 logistic model in each fold: a
-        # feature counts as used if its coefficient is non-zero for any class.
-        self.logreg_coefs = [est.named_steps['logisticregressioncv'].coef_
-                             for est in self.results['logreg_l1']['estimator']]
-        self.sparsity = [int(np.sum(np.any(coef != 0, axis=0))) for coef in self.logreg_coefs]
+        # Number of odours used by the sparse model in each fold
+        self.sparsity = [int(np.sum(self._sparse_support(est)))
+                         for est in self.results[self.sparse_model]['estimator']]
 
     def compute_pc_var_overlap(self):
         # Overlap between the features selected by the PCScoreSelector and VarianceSelector
@@ -111,36 +142,32 @@ class Analysis:
         var_selected = [est.named_steps['varianceselector'].get_support() for est in self.results['var_k']['estimator']]
         self.pc_var_overlap = [set(self.odour_cols[pc & var].tolist()) for pc, var in zip(pc_selected, var_selected)]
 
-    def compute_logreg_pc_overlap(self):
-        # Overlap between the odours used by the L1 logistic model (non-zero
-        # coefficient for any class) and those selected by the PCScoreSelector
-        logreg_selected = [np.any(est.named_steps['logisticregressioncv'].coef_ != 0, axis=0)
-                           for est in self.results['logreg_l1']['estimator']]
+    def compute_sparse_pc_overlap(self):
+        # Overlap between the odours used by the sparse model and those
+        # selected by the PCScoreSelector
+        sparse_selected = [self._sparse_support(est) for est in self.results[self.sparse_model]['estimator']]
         pc_selected = [est.named_steps['pcscoreselector'].get_support() for est in self.results['pc_k']['estimator']]
-        self.logreg_pc_overlap = [set(self.odour_cols[lr & pc].tolist()) for lr, pc in zip(logreg_selected, pc_selected)]
+        self.sparse_pc_overlap = [set(self.odour_cols[sp & pc].tolist()) for sp, pc in zip(sparse_selected, pc_selected)]
 
     def compute_selection_frequencies(self):
-        # For each odour, in how many folds it was used by the L1 logistic
-        # model (non-zero coefficient for any class) and in how many folds it
-        # was in the PCScoreSelector's top k.
-        logreg_sel = [np.any(est.named_steps['logisticregressioncv'].coef_ != 0, axis=0)
-                      for est in self.results['logreg_l1']['estimator']]
+        # For each odour, in how many folds it was used by the sparse model and
+        # in how many folds it was in the PCScoreSelector's top k.
+        sparse_sel = [self._sparse_support(est) for est in self.results[self.sparse_model]['estimator']]
         pc_sel = [est.named_steps['pcscoreselector'].get_support() for est in self.results['pc_k']['estimator']]
         self.selection_freq = pd.DataFrame({
-            'logreg_l1': np.sum(logreg_sel, axis=0),
+            self.sparse_model: np.sum(sparse_sel, axis=0),
             'pc_k': np.sum(pc_sel, axis=0),
         }, index=self.odour_cols)
 
     def compute_confusion_matrices(self):
-        # Aggregate test predictions over folds. Predictions are class labels
-        # (1..5), so no rounding is needed.
+        # Aggregate test predictions over folds, as integer stage labels (1..5)
         n = self.n_classes
         self.confusion_matrices = {name: np.zeros((n, n), dtype=int) for name in self.results.keys()}
         for name, result in self.results.items():
             for i, estimator in enumerate(result['estimator']):
                 test_idx = result["indices"]["test"][i]
-                y_pred = estimator.predict(self.X.iloc[test_idx])
-                y_true = self.y.iloc[test_idx]
+                y_pred = self._predict_stages(estimator, self.X.iloc[test_idx])
+                y_true = self.y.iloc[test_idx].astype(int)
                 for true, pred in zip(y_true, y_pred):
                     self.confusion_matrices[name][true - 1, pred - 1] += 1
 
@@ -148,21 +175,23 @@ class Analysis:
         for fld in ["perfect", "chance", "uniform"]:
             self.confusion_matrices[fld] = create_mock_confusion_matrix(fld, n, row_counts, self.seed)
 
-    def compute_p_values(self, n_rand=100, non_pc=True, agg_fun=np.mean):
-        # Null distribution: classification accuracy using a random set of k
-        # odours (optionally excluding the top-k PC-score odours).
+    def compute_p_values(self, n_rand=100, non_pc=True, agg_fun=None):
+        # Null distribution: the same CV score using a random set of k odours
+        # (optionally excluding the top-k PC-score odours).
+        if agg_fun is None:
+            agg_fun = self.default_agg
         self.rand_results = np.array([
             cross_val_score(make_pipeline((RandomNonPCSelector if non_pc else RandomSelector)(k=self.k, random_state=i),
-                                          LogisticRegression(max_iter=5000)),
+                                          self._null_estimator()),
                             self.X, self.y,
                             groups=self.groups,
                             cv=self.cv,
-                            scoring='accuracy')
+                            scoring=self.scoring)
             for i in tqdm(range(n_rand))])
 
         self.rand_results_agg = agg_fun(self.rand_results, axis=-1)
         # p-value: proportion of random feature sets that do at least as well.
-        # Accuracy is discrete so ties are counted against the model (>=).
+        # Scores may be discrete (accuracy), so ties count against the model (>=).
         self.p_values_per_fold = {}
         self.p_values_agg = {}
         self.model_scores_agg = {}
@@ -180,13 +209,47 @@ class Analysis:
             self.p_values_agg[name] = ((1 + np.sum(self.rand_results_agg >= self.model_scores_agg[name])) / (1 + n_rand)).astype(float)
 
 
+class RegressionAnalysis(Analysis):
+    """Linear-regression variant, maximally parallel to the sechellia ripeness
+    analysis: Lasso predicts real-valued ripeness, selectors feed a linear
+    regression, scoring is (negative) RMSE, and confusion matrices are built by
+    rounding predictions to the nearest stage."""
+    sparse_model = "lasso"
+    sparse_step = "lassocv"
+    scoring = "neg_root_mean_squared_error"
+    target_dtype = float
+
+    def __init__(self, k=6, seed=0, inner_cv=3):
+        super().__init__(k=k, seed=seed, inner_cv=inner_cv)
+        self.default_agg = np.median  # as in the sechellia analysis
+
+    def _build_models(self, inner_cv):
+        return {
+            "lasso":  make_pipeline(LassoCV(cv=inner_cv, max_iter=50000)),
+            "pc_k":   make_pipeline(PCScoreSelector(k=self.k), LinearRegression()),
+            "var_k":  make_pipeline(VarianceSelector(k=self.k), LinearRegression()),
+            "corr_k": make_pipeline(SelectKBest(score_func=f_regression, k=self.k), RidgeCV()),
+            "dummy":  make_pipeline(DummyRegressor(strategy='mean')),
+        }
+
+    def _null_estimator(self):
+        return LinearRegression()
+
+    def _predict_stages(self, est, X):
+        # Round real-valued ripeness predictions to the nearest stage
+        return np.clip(np.round(est.predict(X)), 1, self.n_classes).astype(int)
+
+
 # Turn top and right spines off
 spines_off = lambda ax: [ax.spines[spine].set_visible(False) for spine in ['top', 'right']]
 
 
 class PlotResults:
+    """Plots for both the classification and the regression Analysis."""
+
     def __init__(self, analysis, colorby="ripeness"):
         self.analysis = analysis
+        self.is_accuracy = (analysis.scoring == 'accuracy')
         if colorby == "fold":
             self.fold_cols = cm.rainbow(np.linspace(0, 1, len(self.analysis.groups.unique())))
         # Color folds by the ripeness of the leftout fruit
@@ -197,52 +260,75 @@ class PlotResults:
             self.fold_cols = cm.rainbow(ripeness_norm.values)
         else:
             raise ValueError(f"Unknown colorby value: {colorby}")
-        self.model_cols = {"logreg_l1": "C0", "pc_k": "C1", "var_k": "C2", "corr_k": "C3", "dummy": "gray"}
-        self.model_names = {"logreg_l1": "LogReg$_{L1}$", "pc_k": "$PC_k$", "var_k": "$Var_k$", "corr_k": "$Corr_k$",
-                            "dummy": "Dummy", "perfect": "Perfect", "chance": "Chance", "uniform": "Uniform"}
+        self.model_cols = {"logreg_l1": "C0", "lasso": "C0", "pc_k": "C1", "var_k": "C2", "corr_k": "C3", "dummy": "gray"}
+        self.model_names = {"logreg_l1": "LogReg$_{L1}$", "lasso": "Lasso", "pc_k": "$PC_k$", "var_k": "$Var_k$",
+                            "corr_k": "$Corr_k$", "dummy": "Dummy",
+                            "perfect": "Perfect", "chance": "Chance", "uniform": "Uniform"}
         plt.style.use("default")
+
+    def _fold_legend(self, ax, **kwargs):
+        for j, col in enumerate(self.fold_cols):
+            ax.scatter([], [], color=col, label=f'{self.analysis.groups.unique()[j]}')
+        ax.legend(ncol=5, fontsize=7, title="Leftout fruit", **kwargs)
 
     def plot_accuracy(self, ax):
         # One point per fold (leave-one-fruit-out, so each is 0 or 1);
-        # whiskers at median and IQR, as in the sechellia RMSE plot.
+        # horizontal line at the mean.
         for i, (name, result) in enumerate(self.analysis.results.items()):
             ts = result['test_score']
             x = np.linspace(i - 0.2, i + 0.2, len(ts))
             ax.scatter(x, ts, alpha=0.5, color=self.fold_cols, s=20)
-            if i == 0:
-                for j, col in enumerate(self.fold_cols):
-                    ax.scatter([], [], color=col, label=f'{self.analysis.groups.unique()[j]}')
-            mean = np.mean(ts)
-            ax.hlines(mean, i - 0.2, i + 0.2, color='black', lw=1)
+            ax.hlines(np.mean(ts), i - 0.2, i + 0.2, color='black', lw=1)
         ax.axhline(1 / self.analysis.n_classes, color='gray', linestyle=':', lw=1, label='Chance')
+        self._fold_legend(ax, loc='lower left')
         ax.set_xticks(range(len(self.analysis.results)))
         ax.set_xticklabels([self.model_names[name] for name in self.analysis.results.keys()])
         ax.set_ylabel("Accuracy")
         ax.set_ylim(-0.05, 1.05)
         ax.set_title("Leave-one-fruit-out accuracy per model")
-        ax.legend(ncol=5, fontsize=7, title="Leftout fruit", loc='lower left')
         spines_off(ax)
 
+    def plot_rmse(self, ax):
+        # One point per fold; whiskers at median and IQR, as in sechellia.
+        for i, (name, result) in enumerate(self.analysis.results.items()):
+            ts = -result['test_score']
+            x = np.linspace(i - 0.2, i + 0.2, len(ts))
+            ax.scatter(x, ts, alpha=0.5, color=self.fold_cols, s=20)
+            median = np.median(ts)
+            q1, q3 = np.percentile(ts, [25, 75])
+            ax.hlines(median, i - 0.2, i + 0.2, color='black', lw=1)
+            ax.vlines(i, q1, q3, color='black', lw=1)
+        self._fold_legend(ax, loc='upper left')
+        ax.set_xticks(range(len(self.analysis.results)))
+        ax.set_xticklabels([self.model_names[name] for name in self.analysis.results.keys()])
+        ax.set_ylabel("RMSE")
+        ax.set_title("Leave-one-fruit-out RMSE per model")
+        spines_off(ax)
+
+    def plot_score(self, ax):
+        # Dispatch on the analysis type
+        return self.plot_accuracy(ax) if self.is_accuracy else self.plot_rmse(ax)
+
     def plot_sparsity(self, ax):
-        # Histogram of the number of odours used by the L1 logistic model
+        # Histogram of the number of odours used by the sparse model
         ax.hist(self.analysis.sparsity, bins=np.arange(0, self.analysis.X.shape[1] + 1) - 0.5, density=False, alpha=0.7)
         mean_sparsity = np.mean(self.analysis.sparsity)
         ax.axvline(mean_sparsity, color='red', linestyle='--', label=f'Mean: {mean_sparsity:.2f}')
         ax.set_xlabel("Number of odours used")
         ax.set_ylabel("Count")
-        ax.set_title("Classifier sparsity level")
+        ax.set_title(f"{self.model_names[self.analysis.sparse_model]} sparsity level")
         ax.set_xlim(-0.5, max(self.analysis.sparsity) + 3)
         ax.legend(fontsize=8)
         spines_off(ax)
 
     def plot_overlap(self, ax):
         # Histograms of the per-fold overlap of the PC_k features with the
-        # Var_k features and (when computed) with the odours used by the L1
-        # logistic model.
+        # Var_k features and (when computed) with the sparse model's odours.
         bins = np.arange(0, self.analysis.k + 2) - 0.5
         counts = {'$PC_k \\cap Var_k$': [len(o) for o in self.analysis.pc_var_overlap]}
-        if hasattr(self.analysis, 'logreg_pc_overlap'):
-            counts['$PC_k \\cap$ LogReg$_{L1}$'] = [len(o) for o in self.analysis.logreg_pc_overlap]
+        if hasattr(self.analysis, 'sparse_pc_overlap'):
+            counts[f'$PC_k \\cap$ {self.model_names[self.analysis.sparse_model]}'] = \
+                [len(o) for o in self.analysis.sparse_pc_overlap]
         ax.hist(list(counts.values()), bins=bins, density=False, alpha=0.7, label=list(counts.keys()))
         ax.set_xlabel("Number of overlapping features")
         ax.set_ylabel("Count")
@@ -251,32 +337,35 @@ class PlotResults:
         spines_off(ax)
 
     def plot_pc_score_vs_coef(self, ax):
-        # PC score vs the size of the L1 logistic coefficient for each odour.
-        # The multinomial model has one coefficient per class per odour, so
-        # summarize each odour by its largest absolute coefficient.
-        for i, (logreg, pck) in enumerate(zip(self.analysis.results['logreg_l1']['estimator'],
+        # PC score vs the size of the sparse model's coefficient for each
+        # odour. The multinomial logistic model has one coefficient per class
+        # per odour, so summarize each odour by its largest absolute
+        # coefficient (for the lasso this is just |coefficient|).
+        name = self.model_names[self.analysis.sparse_model]
+        for i, (sparse, pck) in enumerate(zip(self.analysis.results[self.analysis.sparse_model]['estimator'],
                                               self.analysis.results['pc_k']['estimator'])):
-            coef = np.max(np.abs(logreg.named_steps['logisticregressioncv'].coef_), axis=0)
+            coef = np.max(np.abs(self.analysis._sparse_coef(sparse)), axis=0)
             pc_score = pck.named_steps['pcscoreselector'].pc_score_
             ax.scatter(pc_score, coef, alpha=0.5, color=self.fold_cols[i], label=f'Fold {i+1}')
         ax.set_xlabel("PC Score")
-        ax.set_ylabel("max |LogReg$_{L1}$ coefficient|")
-        ax.set_title("PC Score vs LogReg$_{L1}$ Coefficient")
+        ax.set_ylabel(f"max |{name} coefficient|")
+        ax.set_title(f"PC Score vs {name} Coefficient")
         spines_off(ax)
 
     def plot_selection_frequency(self, ax, top_n=10):
         # Horizontal grouped bars: for the top_n most-selected odours, the
-        # number of folds in which each was used by the L1 logistic model and
-        # selected by the PCScoreSelector.
+        # number of folds in which each was used by the sparse model and
+        # selected by the PCScoreSelector. Never-selected odours are omitted.
         freq = self.analysis.selection_freq
-        n_folds = len(self.analysis.results['logreg_l1']['test_score'])
+        sparse = self.analysis.sparse_model
+        n_folds = len(self.analysis.results[sparse]['test_score'])
         totals = freq.sum(axis=1)
         top = totals[totals > 0].sort_values(ascending=False, kind='stable').head(top_n).index
         f = freq.loc[top]
         y = np.arange(len(top))
         h = 0.38
-        ax.barh(y - h / 2, f['logreg_l1'], height=h, color=self.model_cols['logreg_l1'],
-                alpha=0.8, label=self.model_names['logreg_l1'])
+        ax.barh(y - h / 2, f[sparse], height=h, color=self.model_cols[sparse],
+                alpha=0.8, label=self.model_names[sparse])
         ax.barh(y + h / 2, f['pc_k'], height=h, color=self.model_cols['pc_k'],
                 alpha=0.8, label=self.model_names['pc_k'])
         ax.set_yticks(y)
@@ -311,12 +400,17 @@ class PlotResults:
                         color="white" if cm_normalized[i, j] > thresh else "black")
 
     def plot_aggregate_p_values(self, ax, which_models=None):
-        # Histogram of the aggregate accuracy of random odour sets, with a
-        # vertical line at each model's aggregate accuracy.
-        ax.hist(self.analysis.rand_results_agg,
-                bins=np.arange(-0.5, len(self.analysis.groups.unique()) + 1.5) / len(self.analysis.groups.unique()),
-                density=True, alpha=0.7, label='Random',
-                color='lightgray')
+        # Histogram of the aggregate score of random odour sets, with a
+        # vertical line at each model's aggregate score. Accuracy is plotted
+        # as-is; RMSE is plotted positive (scores are negative RMSE).
+        if self.is_accuracy:
+            rand, metric = self.analysis.rand_results_agg, "accuracy"
+            n_folds = len(self.analysis.groups.unique())
+            bins = np.arange(-0.5, n_folds + 1.5) / n_folds
+        else:
+            rand, metric = -self.analysis.rand_results_agg, "RMSE"
+            bins = int(np.sqrt(len(rand)))
+        ax.hist(rand, bins=bins, density=True, alpha=0.7, label='Random', color='lightgray')
 
         if which_models is None:
             which_models = list(self.model_names.keys())
@@ -325,28 +419,27 @@ class PlotResults:
             if name not in which_models:
                 continue
             label = f'{self.model_names[name]} (p={self.analysis.p_values_agg[name]:.3f})'
-            ax.axvline(score, color=self.model_cols[name],
-                       linestyle='--',
-                       label=label)
-        ax.set_xlabel("Aggregate accuracy")
+            ax.axvline(score if self.is_accuracy else -score,
+                       color=self.model_cols[name], linestyle='--', label=label)
+        ax.set_xlabel(f"Aggregate {metric}")
         ax.set_ylabel("Density")
-        ax.set_title("Aggregate accuracy and p-values")
-        ax.set_xlim(0, 1)
+        ax.set_title(f"Aggregate {metric} and p-values")
+        if self.is_accuracy:
+            ax.set_xlim(0, 1)
         ax.legend(fontsize=8)
         spines_off(ax)
 
     def plot_per_fold_p_values(self, ax, whiskers=True):
-        # Per-fold p-values. NB with leave-one-fruit-out each fold's accuracy
-        # is 0 or 1, so these are coarse; the aggregate p-value is the
-        # meaningful statistic.
+        # Per-fold p-values. NB with leave-one-fruit-out and accuracy scoring
+        # each fold's score is 0 or 1, so these are coarse; the aggregate
+        # p-value is the meaningful statistic.
         for i, (name, p_vals) in enumerate(self.analysis.p_values_per_fold.items()):
             x = np.linspace(i - 0.2, i + 0.2, len(p_vals))
             y = -np.log10(p_vals)
             ax.scatter(x, y, alpha=0.5, color=self.fold_cols, s=20)
             if whiskers:
                 median = np.median(y)
-                q1 = np.percentile(y, 25)
-                q3 = np.percentile(y, 75)
+                q1, q3 = np.percentile(y, [25, 75])
                 ax.hlines(median, i - 0.2, i + 0.2, color='black', lw=1)
                 ax.vlines(i, q1, q3, color='black', lw=1)
         ax.set_xticks(range(len(self.analysis.p_values_per_fold)))
@@ -359,13 +452,13 @@ class PlotResults:
         # (row, col, label, plot_func) for the main figure. row/col may be an
         # int, a slice, or a (start, stop) tuple to span multiple cells.
         return [
-            (0, 0, "A", self.plot_accuracy),
+            (0, 0, "A", self.plot_score),
             (0, 1, "B", self.plot_sparsity),
             (0, 2, "C", self.plot_overlap),
             (1, 0, "D", self.plot_pc_score_vs_coef),
             (1, 1, "E", self.plot_aggregate_p_values),
             (1, 2, "F", self.plot_per_fold_p_values),
-            (2, 0, "G", self.plot_confusion_matrix, "logreg_l1"),
+            (2, 0, "G", self.plot_confusion_matrix, self.analysis.sparse_model),
             (2, 1, "H", self.plot_confusion_matrix, "pc_k"),
             (2, 2, "I", self.plot_confusion_matrix, "dummy"),
         ]
